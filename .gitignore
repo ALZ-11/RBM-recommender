@@ -1,0 +1,11 @@
+ml-latest-small.zip
+ml-latest-small/
+
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+__pycache__/
+*.py[cod]
+
+.DS_Store
+Thumbs.db
