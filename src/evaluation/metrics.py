@@ -53,8 +53,12 @@ def compute_precision_recall_ndcg(v_recon, v_input, m_input, v_target, m_target,
         relevant_indices = np.where((target_mask[u] == 1.0) & (target_val[u] >= relevance_threshold))[0]
         num_relevant = len(relevant_indices)
         
+        # Decouple metric tracking to eliminate evaluation selection bias (fix)
+        # If the user has no relevant target items in their holdout, hits are mathematically 0.
         if num_relevant == 0:
-            # updated to skip users with no relevant target items to avoid metric deflation bias
+            precisions.append(0.0)
+            ndcgs.append(0.0)
+            # Recall is omitted to prevent division-by-zero
             continue
             
         # Calculate Precision & Recall
@@ -67,7 +71,7 @@ def compute_precision_recall_ndcg(v_recon, v_input, m_input, v_target, m_target,
         precisions.append(precision)
         recalls.append(recall)
         
-        # Calculate Normalized Discounted Cumulative Gain (NDCG)
+        # Calculate NDCG
         dcg = 0.0
         for i, idx in enumerate(top_k_indices):
             if idx in relevant_indices:
@@ -80,6 +84,9 @@ def compute_precision_recall_ndcg(v_recon, v_input, m_input, v_target, m_target,
         ndcg = dcg / idcg if idcg > 0.0 else 0.0
         ndcgs.append(ndcg)
         
-    if len(precisions) == 0:
-        return 0.0, 0.0, 0.0    # handle empty list
-    return np.mean(precisions), np.mean(recalls), np.mean(ndcgs)
+    # Compute cohort averages strictly over their respective valid distributions
+    mean_precision = np.mean(precisions) if len(precisions) > 0 else 0.0
+    mean_recall = np.mean(recalls) if len(recalls) > 0 else 0.0
+    mean_ndcg = np.mean(ndcgs) if len(ndcgs) > 0 else 0.0
+    
+    return mean_precision, mean_recall, mean_ndcg
