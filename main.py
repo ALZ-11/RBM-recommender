@@ -67,12 +67,8 @@ def main(config_path="configs/config.yaml"):
     train_loader = DataLoader(train_dataset, batch_size=config['hyperparameters']['batch_size'], shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=config['hyperparameters']['batch_size'], shuffle=False)
     
-    # Compute empirical movie averages strictly over training users (fix)
-    train_ratings = train_dataset.global_v[train_dataset.user_indices]
-    train_masks = train_dataset.global_m[train_dataset.user_indices]
-    sum_ratings = np.sum(train_ratings, axis=0)
-    num_ratings = np.sum(train_masks, axis=0)
-    global_mean = np.sum(train_ratings) / max(1.0, np.sum(train_masks))
+    # Compute empirical movie averages strictly over training users (without dense matrices)
+    sum_ratings, num_ratings, global_mean = train_dataset.get_cohort_summaries()
     
     # Bayesian shrinkage (k=5.0) to handle sparse items smoothly
     init_v_bias = np.where(

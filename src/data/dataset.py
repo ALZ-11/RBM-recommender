@@ -34,32 +34,63 @@ class MovieLensDataset(Dataset):
         self.num_users = len(self.raw_user_to_idx)
         self.num_movies = len(self.raw_movie_to_idx)
 
-        # Build global dense representations
-        self.global_v = np.zeros((self.num_users, self.num_movies), dtype=np.float32)
-        self.global_m = np.zeros((self.num_users, self.num_movies), dtype=np.float32)
+        # Memory-efficient sparse storage (fix)
+        # store ratings in a list of dictionaries instead of allocating massive dense 2D matrices
+        self.user_ratings = [{} for _ in range(self.num_users)]
 
         for row in ratings_df.itertuples():
             u_idx = self.raw_user_to_idx[row.userId]
             m_idx = self.raw_movie_to_idx[row.movieId]
             # Global linear scale: maps raw [0.5, 5.0] to [0.0, 1.0]
-            self.global_v[u_idx, m_idx] = (row.rating - 0.5) / 4.5
-            self.global_m[u_idx, m_idx] = 1.0
+            self.user_ratings[u_idx][m_idx] = (row.rating - 0.5) / 4.5
 
     def __len__(self):
         return len(self.user_indices)
 
+    def get_cohort_summaries(self):
+        """
+        Computes the sum of ratings, sum of masks, and global mean strictly over 
+        the active user_indices cohort without constructing a global dense matrix.
+        Returns:
+            sum_ratings (ndarray): Shape (num_movies,)
+            num_ratings (ndarray): Shape (num_movies,)
+            global_mean (float): Scalar global average
+        """
+        sum_ratings = np.zeros(self.num_movies, dtype=np.float32)
+        num_ratings = np.zeros(self.num_movies, dtype=np.float32)
+        
+        for user_idx in self.user_indices:
+            for m_idx, rating in self.user_ratings[user_idx].items():
+                sum_ratings[m_idx] += rating
+                num_ratings[m_idx] += 1.0
+                
+        total_sum = np.sum(sum_ratings)
+        total_count = np.sum(num_ratings)
+        global_mean = total_sum / max(1.0, total_count)
+        
+        return sum_ratings, num_ratings, global_mean
+
+    def _get_user_dense_vectors(self, user_idx):
+        """Helper to reconstruct dense representations on-the-fly for a user."""
+        v_user = np.zeros(self.num_movies, dtype=np.float32)
+        m_user = np.zeros(self.num_movies, dtype=np.float32)
+        
+        for m_idx, rating in self.user_ratings[user_idx].items():
+            v_user[m_idx] = rating
+            m_user[m_idx] = 1.0
+        return v_user, m_user
+
     def __getitem__(self, idx):
         # Translate dataset-relative index back to the global index space
         user_idx = self.user_indices[idx]
-        v_user = self.global_v[user_idx]
-        m_user = self.global_m[user_idx]
+        v_user, m_user = self._get_user_dense_vectors(user_idx)
 
         if self.mode == "train":
             return torch.from_numpy(v_user), torch.from_numpy(m_user)
 
         elif self.mode == "test":
-            # Retrieve indices where the user has rated movies
-            rated_indices = np.where(m_user == 1.0)[0]
+            # Retrieve movie indices rated by this user directly from dictionary keys
+            rated_indices = np.array(list(self.user_ratings[user_idx].keys()))
             num_ratings = len(rated_indices)
 
             # Initialize user-specific seed for deterministic splitting (Phase 2, Step 3)

@@ -8,9 +8,9 @@ class PopularityRecommender:
         """
         Learns global item popularity strictly from the training dataset cohort.
         """
-        # Slice global_m using train_dataset.user_indices to exclude test user interactions
-        train_masks = train_dataset.global_m[train_dataset.user_indices]
-        self.popularity_scores = np.sum(train_masks, axis=0)
+        # Exclude dense matrices by retrieving active item counts from get_cohort_summaries
+        _, num_ratings, _ = train_dataset.get_cohort_summaries()
+        self.popularity_scores = num_ratings
 
     def evaluate(self, dataloader, top_k=10):
         """
@@ -20,14 +20,12 @@ class PopularityRecommender:
         all_recalls = []
         all_ndcgs = []
         
-        # Expand popularity scores to match batch processing
         scores_template = torch.from_numpy(self.popularity_scores).float()
         
         for v_input, m_input, v_target, m_target in dataloader:
             batch_size = v_input.size(0)
             
             # Broadcast popularity scores across the batch
-            # Shape: (batch_size, visible_units)
             v_recon_mean = scores_template.unsqueeze(0).expand(batch_size, -1)
             
             # Calculate ranking metrics
@@ -52,21 +50,11 @@ class GlobalMeanRecommender:
         Computes the global average rating and movie-specific average ratings
         strictly from the training user cohort, using a Bayesian shrinkage prior.
         """
-        # Slice global tensors using train_dataset.user_indices to isolate the training cohort
-        train_ratings = train_dataset.global_v[train_dataset.user_indices]
-        train_masks = train_dataset.global_m[train_dataset.user_indices]
-        
-        # Calculate individual movie averages over training users
-        sum_ratings = np.sum(train_ratings, axis=0)
-        num_ratings = np.sum(train_masks, axis=0)
-        
-        # Compute global average strictly over the training cohort
-        global_sum = np.sum(train_ratings)
-        global_count = np.sum(train_masks)
-        self.global_mean = global_sum / max(1.0, global_count)
+        # Exclude dense matrices by retrieving sum and count from get_cohort_summaries
+        sum_ratings, num_ratings, global_mean = train_dataset.get_cohort_summaries()
+        self.global_mean = global_mean
         
         # Bayesian Shrinkage Prior (k = pseudo-observations)
-        # Low-frequency movies are pulled toward the global mean to avoid rating-extreme anomalies.
         k = 10.0
         self.movie_means = np.where(
             num_ratings > 0, 
