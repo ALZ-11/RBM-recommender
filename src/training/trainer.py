@@ -19,7 +19,7 @@ class GBRBMTrainer:
         """
         Executes a single batch update using Masked Contrastive Divergence (CD-k).
         Args:
-            batch_v (Tensor): Normalised rating tensor of shape (batch_size, visible_units)
+            batch_v (Tensor): Normalized rating tensor of shape (batch_size, visible_units)
             batch_m (Tensor): Binary observation mask of shape (batch_size, visible_units)
         Returns:
             reconstruction_error (float): Mean Squared Error calculated over observed indices only
@@ -39,23 +39,32 @@ class GBRBMTrainer:
         for step in range(self.cd_steps):
             # Track both continuous expectations and sampled states
             v_curr_mean, v_curr = self.model.sample_v(h_curr_sample, batch_m)
+            
+            # Clip expectations and sampled states to [0.0, 1.0] to respect target bounds
+            v_curr_mean = torch.clamp(v_curr_mean, 0.0, 1.0)
+            v_curr = torch.clamp(v_curr, 0.0, 1.0)
+            
             neg_h_prob, h_curr_sample = self.model.sample_h(v_curr, batch_m)
             
-        # Calculate batch-level active mask for items (fix)
-        # Shape: (visible_units,)
+        # Run a final expectation step to align the visible reconstruction 
+        # with the final hidden representations at step k (fix)
+        v_final_mean, _ = self.model.sample_v(h_curr_sample, batch_m)
+        v_final_mean = torch.clamp(v_final_mean, 0.0, 1.0)
+            
+        # Calculate batch-level active mask for items
         item_active = (torch.sum(batch_m, dim=0) > 0).float()
             
         # Compute Manual Masked Gradients
-        # absorb 1/sigma and 1/sigma^2 into parameter-specific learning rates
-        # (cancels out the division by small sigma values, thereby stabilizing optimization)
         pos_grad_W = torch.mm(pos_h_prob.t(), batch_v)
-        neg_grad_W = torch.mm(neg_h_prob.t(), v_curr_mean)
+        # Resolved pairing mismatch by utilizing the step-k aligned v_final_mean
+        neg_grad_W = torch.mm(neg_h_prob.t(), v_final_mean)
         
         # Multiply L2 decay by active items to prevent over-regularization of rare movies
         grad_W = -(pos_grad_W - neg_grad_W) / batch_size + self.l2_reg * self.model.W * item_active.unsqueeze(0)
         
         # Visible Bias Gradient (Masked, division by sigma^2 absorbed into learning rate)
-        grad_v_bias = -torch.mean((batch_v - v_curr_mean) * batch_m, dim=0)
+        # Resolved pairing mismatch by contrasting target with the step-k aligned expectation
+        grad_v_bias = -torch.mean((batch_v - v_final_mean) * batch_m, dim=0)
         
         # Hidden Bias Gradient
         grad_h_bias = -torch.mean(pos_h_prob - neg_h_prob, dim=0)
@@ -70,8 +79,8 @@ class GBRBMTrainer:
         
         self.optimizer.step()
         
-        # Calculate Observed Reconstruction Error (MSE over active ratings)
-        observed_sq_error = ((batch_v - v_curr_mean) * batch_m) ** 2
+        # Calculate observed reconstruction error (MSE over active ratings) using final step expectations
+        observed_sq_error = ((batch_v - v_final_mean) * batch_m) ** 2
         reconstruction_error = torch.sum(observed_sq_error) / torch.clamp(torch.sum(batch_m), min=1.0)
         
         return reconstruction_error.item()

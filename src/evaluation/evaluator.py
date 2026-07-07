@@ -28,6 +28,9 @@ def evaluate_model(model, dataloader, top_k=10, device="cpu"):
         full_mask = torch.ones_like(m_input)
         v_recon_mean, _ = model.sample_v(h_sample, full_mask)
         
+        # Clip evaluation outputs to [0.0, 1.0] before metric evaluation (fix)
+        v_recon_mean = torch.clamp(v_recon_mean, 0.0, 1.0)
+        
         # Calculate prediction RMSE strictly on targets
         rmse = compute_rmse(v_recon_mean, v_target, m_target)
         if rmse is not None:
