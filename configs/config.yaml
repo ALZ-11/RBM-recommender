@@ -1,5 +1,5 @@
 experiment:
-  name: "GBRBM_MovieLens_Base"  # Change to "GBRBM_MovieLens_Tuned" for tuned hyperparameters
+  name: "GBRBM_MovieLens_Tuned"  # Change to "GBRBM_MovieLens_Base" for base hyperparameters
   seed: 42
   device: "cuda"              # 'cuda' or 'cpu'
   val_every_n_epochs: 5       # Run evaluation loop on held-out targets every N epochs
@@ -10,15 +10,15 @@ dataset:
   test_ratio: 0.2             # Within-user rating hold-out ratio (gamma)
 
 model:
-  hidden_units: 128           # tuned config: 256
-  sigma: 0.1                 # tuned config: 0.05
+  hidden_units: 256           # revert to base config: 128
+  sigma: 0.05                 # revert to base config: 0.1
 
 hyperparameters:
   epochs: 40
   batch_size: 64
   learning_rate: 0.005
-  cd_steps: 1                 # Contrastive Divergence steps (k), tuned config: 3
-  l2_reg: 0.0002              # Weight decay coefficient, tuned config: 0.001
+  cd_steps: 3                 # Contrastive Divergence steps (k), revert to base config: 1
+  l2_reg: 0.001              # Weight decay coefficient, revert to base config: 0.0002
 
 metrics:
   top_k: 10                   # K parameter for HitRate@K, Precision@K, Recall@K

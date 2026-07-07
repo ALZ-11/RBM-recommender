@@ -67,11 +67,26 @@ def main(config_path="configs/config.yaml"):
     train_loader = DataLoader(train_dataset, batch_size=config['hyperparameters']['batch_size'], shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=config['hyperparameters']['batch_size'], shuffle=False)
     
-    # Instantiate Model and Optimizers
+    # Compute empirical movie averages strictly over training users (fix)
+    train_ratings = train_dataset.global_v[train_dataset.user_indices]
+    train_masks = train_dataset.global_m[train_dataset.user_indices]
+    sum_ratings = np.sum(train_ratings, axis=0)
+    num_ratings = np.sum(train_masks, axis=0)
+    global_mean = np.sum(train_ratings) / max(1.0, np.sum(train_masks))
+    
+    # Bayesian shrinkage (k=5.0) to handle sparse items smoothly
+    init_v_bias = np.where(
+        num_ratings > 0,
+        (sum_ratings + 5.0 * global_mean) / (num_ratings + 5.0),
+        global_mean
+    )
+    
+    # Instantiate Model and Optimizers with empirical visible bias
     model = GaussianBernoulliRBM(
         visible_units=train_dataset.num_movies,
         hidden_units=config['model']['hidden_units'],
-        sigma=config['model']['sigma']
+        sigma=config['model']['sigma'],
+        init_v_bias=init_v_bias
     ).to(device)
     
     optimizer = torch.optim.Adam(

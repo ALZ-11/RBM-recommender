@@ -4,13 +4,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class GaussianBernoulliRBM(nn.Module):
-    def __init__(self, visible_units, hidden_units, sigma=0.1):
+    def __init__(self, visible_units, hidden_units, sigma=0.1, init_v_bias=None):
         """
         Initializes parameter tensors for the Masked Gaussian-Bernoulli RBM.
         Args:
             visible_units (int): Number of visible units D (movies)
             hidden_units (int): Number of hidden units F (latent features)
             sigma (float): Standard deviation of the Gaussian visible units
+            init_v_bias (ndarray, optional): Precomputed movie averages for empirical initialization
         """
         super(GaussianBernoulliRBM, self).__init__()
         self.visible_units = visible_units
@@ -19,7 +20,13 @@ class GaussianBernoulliRBM(nn.Module):
         
         # Initialize weights with standard guidelines (scaled random normal)
         self.W = nn.Parameter(torch.randn(hidden_units, visible_units) * 0.01)
-        self.v_bias = nn.Parameter(torch.zeros(visible_units))
+        
+        # Initialize visible bias empirically if provided (fix)
+        if init_v_bias is not None:
+            self.v_bias = nn.Parameter(torch.tensor(init_v_bias, dtype=torch.float32))
+        else:
+            self.v_bias = nn.Parameter(torch.zeros(visible_units))
+            
         self.h_bias = nn.Parameter(torch.zeros(hidden_units))
 
     def sample_h(self, v, mask):
