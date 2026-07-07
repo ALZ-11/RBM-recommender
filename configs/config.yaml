@@ -1,0 +1,24 @@
+experiment:
+  name: "GBRBM_MovieLens_Base"
+  seed: 42
+  device: "cuda"              # 'cuda' or 'cpu'
+  val_every_n_epochs: 5       # Run evaluation loop on held-out targets every N epochs
+
+dataset:
+  path: "ml-latest-small/ratings.csv"
+  train_split: 0.8            # User-level split ratio
+  test_ratio: 0.2             # Within-user rating hold-out ratio (gamma)
+
+model:
+  hidden_units: 128
+  sigma: 0.1
+
+hyperparameters:
+  epochs: 40
+  batch_size: 64
+  learning_rate: 0.005
+  cd_steps: 1                 # Contrastive Divergence steps (k)
+  l2_reg: 0.0002              # Weight decay coefficient
+
+metrics:
+  top_k: 10                   # K parameter for HitRate@K, Precision@K, Recall@K
