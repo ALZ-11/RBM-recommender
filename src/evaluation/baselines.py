@@ -50,7 +50,7 @@ class GlobalMeanRecommender:
     def __init__(self, train_dataset):
         """
         Computes the global average rating and movie-specific average ratings
-        strictly from the training user cohort.
+        strictly from the training user cohort, using a Bayesian shrinkage prior.
         """
         # Slice global tensors using train_dataset.user_indices to isolate the training cohort
         train_ratings = train_dataset.global_v[train_dataset.user_indices]
@@ -65,10 +65,12 @@ class GlobalMeanRecommender:
         global_count = np.sum(train_masks)
         self.global_mean = global_sum / max(1.0, global_count)
         
-        # Avoid division by zero for unrated movies in train set by defaulting to global mean
+        # Bayesian Shrinkage Prior (k = pseudo-observations)
+        # Low-frequency movies are pulled toward the global mean to avoid rating-extreme anomalies.
+        k = 10.0
         self.movie_means = np.where(
             num_ratings > 0, 
-            sum_ratings / np.clip(num_ratings, 1.0, None), 
+            (sum_ratings + k * self.global_mean) / (num_ratings + k), 
             self.global_mean
         )
 

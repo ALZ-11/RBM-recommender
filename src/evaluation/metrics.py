@@ -4,7 +4,8 @@ import torch
 
 def compute_rmse(v_recon, v_target, m_target):
     """
-    Computes Root Mean Squared Error (RMSE) over the observed target ratings only.
+    Computes Root Mean Squared Error (RMSE) over the observed target ratings,
+    scaled back to the original [0.5, 5.0] star rating scale.
     """
     recon = v_recon.detach().cpu().numpy()
     target = v_target.detach().cpu().numpy()
@@ -15,8 +16,12 @@ def compute_rmse(v_recon, v_target, m_target):
         return None
         
     sq_error = ((recon - target) * mask) ** 2
-    rmse = np.sqrt(np.sum(sq_error) / num_targets)
-    return rmse
+    rmse_normalized = np.sqrt(np.sum(sq_error) / num_targets)
+    
+    # Scale normalized error [0.0, 1.0] back to 5-star interval [0.5, 5.0]
+    # Scale factor: (5.0 - 0.5) = 4.5
+    rmse_original_scale = rmse_normalized * 4.5
+    return rmse_original_scale
 
 def compute_precision_recall_ndcg(v_recon, v_input, m_input, v_target, m_target, top_k=10, relevance_threshold=0.667):
     """
