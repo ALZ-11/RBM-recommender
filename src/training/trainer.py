@@ -58,6 +58,9 @@ class GBRBMTrainer:
         self.model.v_bias.grad = grad_v_bias
         self.model.h_bias.grad = grad_h_bias
         
+        # Stabilize updates by clipping gradient norms (mitigates gradient explosion risk introduced by 1/sigma^2 and 1/sigma scaling)
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
+        
         self.optimizer.step()
         
         # Calculate Observed Reconstruction Error (MSE over active ratings)
