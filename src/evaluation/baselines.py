@@ -1,16 +1,16 @@
 # src/evaluation/baselines.py
 import numpy as np
 import torch
-from src.evaluation.metrics import compute_rmse, compute_precision_recall_ndcg
+from src.evaluation.metrics import compute_precision_recall_ndcg, compute_rmse
 
 class PopularityRecommender:
     def __init__(self, train_dataset):
         """
-        Learns global item popularity from the training dataset.
+        Learns global item popularity strictly from the training dataset cohort.
         """
-        # Sum the observation masks across all training users to get popularity scores
-        # Shape: (visible_units,)
-        self.popularity_scores = np.sum(train_dataset.global_m, axis=0)
+        # Slice global_m using train_dataset.user_indices to exclude test user interactions
+        train_masks = train_dataset.global_m[train_dataset.user_indices]
+        self.popularity_scores = np.sum(train_masks, axis=0)
 
     def evaluate(self, dataloader, top_k=10):
         """
@@ -40,9 +40,9 @@ class PopularityRecommender:
             
         return {
             "rmse": np.nan,  # Popularity cannot predict explicit rating values
-            "precision_at_k": np.mean(all_precisions),
-            "recall_at_k": np.mean(all_recalls),
-            "ndcg_at_k": np.mean(all_ndcgs)
+            "precision_at_k": np.mean(all_precisions) if len(all_precisions) > 0 else 0.0,
+            "recall_at_k": np.mean(all_recalls) if len(all_recalls) > 0 else 0.0,
+            "ndcg_at_k": np.mean(all_ndcgs) if len(all_ndcgs) > 0 else 0.0
         }
 
 
@@ -50,17 +50,22 @@ class GlobalMeanRecommender:
     def __init__(self, train_dataset):
         """
         Computes the global average rating and movie-specific average ratings
-        from the observed training data.
+        strictly from the training user cohort.
         """
-        # Calculate individual movie averages
-        sum_ratings = np.sum(train_dataset.global_v, axis=0)
-        num_ratings = np.sum(train_dataset.global_m, axis=0)
+        # Slice global tensors using train_dataset.user_indices to isolate the training cohort
+        train_ratings = train_dataset.global_v[train_dataset.user_indices]
+        train_masks = train_dataset.global_m[train_dataset.user_indices]
         
-        # Avoid division by zero for unrated movies in train set by defaulting to global mean
-        global_sum = np.sum(train_dataset.global_v)
-        global_count = np.sum(train_dataset.global_m)
+        # Calculate individual movie averages over training users
+        sum_ratings = np.sum(train_ratings, axis=0)
+        num_ratings = np.sum(train_masks, axis=0)
+        
+        # Compute global average strictly over the training cohort
+        global_sum = np.sum(train_ratings)
+        global_count = np.sum(train_masks)
         self.global_mean = global_sum / max(1.0, global_count)
         
+        # Avoid division by zero for unrated movies in train set by defaulting to global mean
         self.movie_means = np.where(
             num_ratings > 0, 
             sum_ratings / np.clip(num_ratings, 1.0, None), 
@@ -69,7 +74,7 @@ class GlobalMeanRecommender:
 
     def evaluate(self, dataloader, top_k=10):
         """
-        Evaluates the continuous rating prediction capability using movie averages.
+        Evaluates the continuous rating prediction capability using training cohort averages.
         """
         all_rmse = []
         all_precisions = []
@@ -97,7 +102,7 @@ class GlobalMeanRecommender:
             
         return {
             "rmse": np.mean(all_rmse) if len(all_rmse) > 0 else np.nan,
-            "precision_at_k": np.mean(all_precisions),
-            "recall_at_k": np.mean(all_recalls),
-            "ndcg_at_k": np.mean(all_ndcgs)
+            "precision_at_k": np.mean(all_precisions) if len(all_precisions) > 0 else 0.0,
+            "recall_at_k": np.mean(all_recalls) if len(all_recalls) > 0 else 0.0,
+            "ndcg_at_k": np.mean(all_ndcgs) if len(all_ndcgs) > 0 else 0.0
         }
