@@ -41,11 +41,17 @@ class GBRBMTrainer:
             v_curr_mean, v_curr = self.model.sample_v(h_curr_sample, batch_m)
             neg_h_prob, h_curr_sample = self.model.sample_h(v_curr, batch_m)
             
+        # Calculate batch-level active mask for items (fix)
+        # Shape: (visible_units,)
+        item_active = (torch.sum(batch_m, dim=0) > 0).float()
+            
         # Compute Manual Masked Gradients
         # Weights Gradient (with unobserved columns zeroed out and L2 regularization applied)
         pos_grad_W = torch.mm(pos_h_prob.t(), batch_v / self.model.sigma)
         neg_grad_W = torch.mm(neg_h_prob.t(), v_curr_mean / self.model.sigma)
-        grad_W = -(pos_grad_W - neg_grad_W) / batch_size + self.l2_reg * self.model.W
+        
+        # Apply weight decay strictly to active items in this batch (fix)
+        grad_W = -(pos_grad_W - neg_grad_W) / batch_size + self.l2_reg * self.model.W * item_active.unsqueeze(0)
         
         # Visible Bias Gradient (Masked and scaled by sigma^2)
         grad_v_bias = -torch.mean(((batch_v - v_curr_mean) * batch_m) / (self.model.sigma ** 2), dim=0)
@@ -53,12 +59,12 @@ class GBRBMTrainer:
         # Hidden Bias Gradient
         grad_h_bias = -torch.mean(pos_h_prob - neg_h_prob, dim=0)
         
-        # Assign calculated gradients directly to parameter fields to prepare for optimizer step
+        # Assign calculated gradients directly to parameter fields
         self.model.W.grad = grad_W
         self.model.v_bias.grad = grad_v_bias
         self.model.h_bias.grad = grad_h_bias
         
-        # Stabilize updates by clipping gradient norms (mitigates gradient explosion risk introduced by 1/sigma^2 and 1/sigma scaling)
+        # Stabilize updates by clipping gradient norms
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
         
         self.optimizer.step()
