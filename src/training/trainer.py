@@ -46,8 +46,7 @@ class GBRBMTrainer:
             
             neg_h_prob, h_curr_sample = self.model.sample_h(v_curr, batch_m)
             
-        # Run a final expectation step to align the visible reconstruction 
-        # with the final hidden representations at step k (fix)
+        # Run a final expectation step to align the visible reconstruction at step k
         v_final_mean, _ = self.model.sample_v(h_curr_sample, batch_m)
         v_final_mean = torch.clamp(v_final_mean, 0.0, 1.0)
             
@@ -56,15 +55,13 @@ class GBRBMTrainer:
             
         # Compute Manual Masked Gradients
         pos_grad_W = torch.mm(pos_h_prob.t(), batch_v)
-        # Resolved pairing mismatch by utilizing the step-k aligned v_final_mean
         neg_grad_W = torch.mm(neg_h_prob.t(), v_final_mean)
         
-        # Multiply L2 decay by active items to prevent over-regularization of rare movies
-        grad_W = -(pos_grad_W - neg_grad_W) / batch_size + self.l2_reg * self.model.W * item_active.unsqueeze(0)
+        # Restore the formal 1/sigma scaling to the weight gradients (fix)
+        grad_W = (-(pos_grad_W - neg_grad_W) / batch_size) / self.model.sigma
         
-        # Visible Bias Gradient (Masked, division by sigma^2 absorbed into learning rate)
-        # Resolved pairing mismatch by contrasting target with the step-k aligned expectation
-        grad_v_bias = -torch.mean((batch_v - v_final_mean) * batch_m, dim=0)
+        # Restore the formal 1/sigma^2 scaling to the visible bias gradients (fix)
+        grad_v_bias = -torch.mean((batch_v - v_final_mean) * batch_m, dim=0) / (self.model.sigma ** 2)
         
         # Hidden Bias Gradient
         grad_h_bias = -torch.mean(pos_h_prob - neg_h_prob, dim=0)
@@ -79,7 +76,16 @@ class GBRBMTrainer:
         
         self.optimizer.step()
         
-        # Calculate observed reconstruction error (MSE over active ratings) using final step expectations
+        # True Decoupled Weight Decay (AdamW-Style) (fix)
+        # Apply L2 decay directly to W post-update, restricted exclusively to active items.
+        # (avoids Adam's moment-tracking scaling distortions)
+        if self.l2_reg > 0:
+            with torch.no_grad():
+                current_lr = self.optimizer.param_groups[0]['lr']
+                # W = W * (1 - lr * l2_reg * active_mask)
+                self.model.W.mul_(1.0 - current_lr * self.l2_reg * item_active.unsqueeze(0))
+        
+        # Calculate observed reconstruction error (MSE over active ratings)
         observed_sq_error = ((batch_v - v_final_mean) * batch_m) ** 2
         reconstruction_error = torch.sum(observed_sq_error) / torch.clamp(torch.sum(batch_m), min=1.0)
         
