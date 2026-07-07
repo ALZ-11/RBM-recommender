@@ -49,10 +49,7 @@ def compute_precision_recall_ndcg(v_recon, v_input, m_input, v_target, m_target,
         num_relevant = len(relevant_indices)
         
         if num_relevant == 0:
-            # If the user has no relevant movies in their target set, record zero-performance
-            precisions.append(0.0)
-            recalls.append(0.0)
-            ndcgs.append(0.0)
+            # updated to skip users with no relevant target items to avoid metric deflation bias
             continue
             
         # Calculate Precision & Recall
@@ -78,4 +75,6 @@ def compute_precision_recall_ndcg(v_recon, v_input, m_input, v_target, m_target,
         ndcg = dcg / idcg if idcg > 0.0 else 0.0
         ndcgs.append(ndcg)
         
+    if len(precisions) == 0:
+        return 0.0, 0.0, 0.0    # handle empty list
     return np.mean(precisions), np.mean(recalls), np.mean(ndcgs)
