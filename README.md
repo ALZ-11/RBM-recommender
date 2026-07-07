@@ -1,100 +1,218 @@
-# Masked Gaussian-Bernoulli Restricted Boltzmann Machine (GBRBM) for Collaborative Filtering
+# Masked Gaussian-Bernoulli RBM for Collaborative Filtering
 
-This repository implements a collaborative recommendation engine utilizing a **Masked Gaussian-Bernoulli Restricted Boltzmann Machine (GBRBM)** in PyTorch. 
+A modular PyTorch implementation of a **Masked Gaussian-Bernoulli Restricted Boltzmann Machine (GBRBM)** optimized for collaborative filtering on the MovieLens dataset. 
 
-Unlike some traditional energy-based recommender approaches that treat unobserved movie ratings as explicit $0.0$ scores (which heavily biases the network's parameters toward low ratings in highly sparse environments), this implementation introduces a parallel **dual-tensor masking framework**. Unobserved interactions contribute exactly zero gradient pressure during training, allowing the model to learn strictly from observed preference manifolds.
-
----
-
-## 1. Theoretical & Mathematical Foundations
-
-### The Masked Energy Function
-For any user, let $\mathbf{v} \in \mathbb{R}^D$ be the continuous normalized ratings vector across $D$ movies, $\mathbf{h} \in \{0, 1\}^F$ be the binary latent features, and $\mathbf{m} \in \{0, 1\}^D$ be the user's observed rating mask. The system's energy is defined as:
-
-$$E(\mathbf{v}, \mathbf{h} \mid \mathbf{m}) = \sum_{i=1}^D m_i \frac{(v_i - b_i)^2}{2\sigma^2} - \sum_{j=1}^F c_j h_j - \sum_{i=1}^D \sum_{j=1}^F m_i \frac{v_i}{\sigma} W_{ij} h_j$$
-
-where:
-*   $W \in \mathbb{R}^{F \times D}$ is the latent weight matrix.
-*   $\mathbf{b} \in \mathbb{R}^D$ and $\mathbf{c} \in \mathbb{R}^F$ are the visible and hidden bias vectors, respectively.
-*   $\sigma \in \mathbb{R}^+$ is the standard deviation scaling factor for continuous visibles.
-
-### Gibbs Sampling Conditionals
-Because the energy function has no quadratic cross-products coupling hidden units ($h_j h_k$ for $j \neq k$), the conditional probability distribution $P(\mathbf{h} \mid \mathbf{v}; \mathbf{m})$ factorizes. This yields standard independent sigmoid activations:
-
-$$P(h_j = 1 \mid \mathbf{v} ; \mathbf{m}) = \sigma_L\left( c_j + \sum_{i=1}^D m_i \frac{v_i}{\sigma} W_{ij} \right)$$
-
-For the visible layer, the conditional probability for any observed rating ($m_i = 1$) is a Gaussian distribution:
-
-$$P(v_i \mid \mathbf{h} ; \mathbf{m}) \sim \mathcal{N}\left( b_i + \sigma \sum_{j=1}^F W_{ij} h_j, \sigma^2 \right)$$
-
-Unobserved visible entries ($m_i = 0$) are omitted during sampling, protecting the parameter updates from arbitrary imputation bias.
+In order to address the severe sparsity inherent in collaborative filtering, this implementation introduces a masked Contrastive Divergence ($CD-k$) training loop, an active-item decoupled weight decay mechanism, and a memory-efficient sparse data pipeline, alongside a leakage-free evaluation protocol.
 
 ---
 
-## 2. Data Engineering & Leakage Prevention
+## Technical Features
 
-### Dual-Tensor Global Normalization
-Raw movie ratings are scaled globally from their raw interval $[0.5, 5.0]$ to the continuous $[0.0, 1.0]$ interval:
-$$v_{u, i} = \frac{r_{u, i} - 0.5}{4.5}$$
-Unrated items are initialized to $0.0$ in the visible vector, but their parallel mask value is set to $m_{u, i} = 0.0$.
-
-### Leak-Free Splitting
-In order to ensure that performance metrics represent true generalization to unseen data, we implement a partitioning protocol:
-1.  **User Split:** Users are partitioned into $80\%$ training users and $20\%$ test users.
-2.  **Within-User Test Split:** For each test user $u$, their rated indices are randomly partitioned into:
-    *   **Input History ($80\%$ of indices):** Handled as the visible context.
-    *   **Held-out Targets ($20\%$ of indices):** Hidden during Gibbs sampling and used strictly to calculate continuous RMSE and ranking metrics (Recall@K, NDCG@K).
-3.  **Recommendation Filtering:** When calculating ranking metrics, movies present in the user's Input History are masked out, preventing the model from recommending already-watched movies.
+* **Masked Contrastive Divergence ($CD-k$):** Restricts positive and negative Gibbs sampling updates exclusively to observed ratings using binary user-item masks. Unobserved items do not contribute to visible-to-hidden activations or reconstruction gradients.
+* **Active-Item Decoupled Weight Decay:** Implements an AdamW-style weight decay step that is applied *only* to items actively present in the current mini-batch, preventing the latent features of dormant items from decaying prematurely to zero.
+* **Exact Gradient Scaling:** Preserves the formal $1/\sigma$ scaling for weight updates and the $1/\sigma^2$ scaling for visible bias updates, ensuring balanced gradient dynamics across different noise thresholds.
+* **Bayesian Shrinkage Initialization:** Initializes the model's visible biases using item averages smoothed with a Bayesian shrinkage prior ($k=5.0$) computed over the training user cohort.
+* **Leakage-Free Evaluation Split:** Partitions users strictly into disjoint train and test splits. For evaluation, test users are divided into an input visible history (context) and a held-out target set (ground truth) using a deterministic, seed-based user-level random number generator.
+* **Memory-Efficient Data Pipeline:** Stores sparse ratings in memory as a list of dictionaries rather than allocating dense $N \times M$ matrices, scaling well to sparse item spaces.
+* **Experiment Management:** Features TensorBoard logging, YAML-based configuration, fully reproducible seeding, and baseline benchmarking.
 
 ---
 
-## 3. Repository Architecture
+## Repository Structure
 
 ```text
-RBM-Recommender/
+.
 ├── configs/
-│   └── config.yaml             # External hyperparameter configuration
+│   └── config.yaml                 # Experiment and hyperparameter configurations
 ├── src/
-│   ├── __init__.py
 │   ├── data/
-│   │   ├── dataset.py          # Dual-tensor Dataset class and splitting logic
-│   │   └── pipeline.py         # Data download, mapping, and split wrapper
+│   │   ├── dataset.py              # Sparse representation and context/target partition logic
+│   │   └── pipeline.py             # User splitting and cold-start item filtering
+│   ├── evaluation/
+│   │   ├── baselines.py            # Popularity and Movie Mean baselines with Bayesian shrinkage
+│   │   ├── evaluator.py            # Forward pass context-evaluation loop
+│   │   └── metrics.py              # Scaled RMSE, Precision@K, Recall@K, and NDCG@K
 │   ├── models/
-│   │   └── gbrbm.py            # Custom GBRBM PyTorch Module
+│   │   └── gbrbm.py                # Gaussian-Bernoulli RBM architecture
 │   ├── training/
-│   │   └── trainer.py          # CD-k Trainer with custom masked gradients
-│   └── evaluation/
-│       ├── metrics.py          # Continuous and ranking metrics (RMSE, NDCG)
-│       └── evaluator.py        # Evaluation loop over test loaders
-├── main.py                     # Main entry point and orchestration runner
-├── requirements.txt
-└── README.md
+│   │   └── trainer.py              # Manual gradient CD-k and active-item weight decay
+│   └── utils/
+│       └── reproducibility.py      # Seed configuration across Python, NumPy, and PyTorch
+├── main.py                         # Training script for GBRBM
+├── main_benchmark.py               # Evaluation script for baseline models
+├── requirements.txt                # Dependency list
+└── README.md                       # Documentation
 ```
 
 ---
 
-## 4. Execution & Reproducibility Guide
+## Model & Mathematical Overview
 
-### 1. Installation
-Clone the repository and install the required packages:
+The core recommendation engine relies on a modified Gaussian-Bernoulli Restricted Boltzmann Machine (GBRBM), where continuous visible units represent normalized movie ratings, and binary hidden units model latent user preferences.
+
+The energy function of the masked Gaussian-Bernoulli RBM for a given visible rating vector $\mathbf{v}$ and binary hidden vector $\mathbf{h}$ is defined as:
+
+$$E(\mathbf{v}, \mathbf{h}) = \sum_{i} \frac{(v_i - a_i)^2}{2\sigma^2} m_i - \sum_{j} b_j h_j - \sum_{i,j} \frac{v_i}{\sigma} W_{ji} h_j m_i$$
+
+where $m_i \in \{0, 1\}$ is the binary observation mask for item $i$, $a_i$ is the visible bias, $b_j$ is the hidden bias, and $\sigma$ is the homoscedastic visible standard deviation. 
+
+### Conditional Expectations
+1. **Hidden Units:**
+   $$P(h_j = 1 \mid \mathbf{v}) = \sigma_s \left( b_j + \sum_{i} W_{ji} \frac{v_i m_i}{\sigma} \right)$$
+2. **Visible Units:**
+   $$E[v_i \mid \mathbf{h}] = a_i + \sigma \sum_{j} W_{ji} h_j$$
+
+where $\sigma_s(x) = \frac{1}{1 + e^{-x}}$ is the logistic sigmoid function.
+
+### Optimization & Active-Mask Decay
+The parameters are updated using manual gradient computation following the Contrastive Divergence approximation, normalized by the batch size and scaled by the noise parameter $\sigma$. 
+
+Post-update, the weights associated with active items in the batch are decayed:
+
+$$\mathbf{W}_{*, i} \leftarrow \mathbf{W}_{*, i} \left(1 - \eta \cdot \lambda \cdot \mathbb{I}(\text{item } i \text{ active})\right)$$
+
+where $\eta$ is the learning rate, $\lambda$ is the L2 decay coefficient, and $\mathbb{I}$ is the batch activity indicator.
+
+---
+
+## Dataset
+
+This project is configured for the **MovieLens Latest Small** dataset.
+
+Dataset statistics:
+* **610 users**
+* **9,742 movies**
+* **100,836 ratings**
+
+Ratings are normalized from their raw scale $[0.5, 5.0]$ to the continuous range $[0.0, 1.0]$ for model training and un-normalized back during evaluation. The data pipeline will automatically search for and unpack standard `ml-latest-small.zip` archives if present in the root folder.
+
+---
+
+## Evaluation Protocol & Metrics
+
+The pipeline implements a within-user holdout evaluation protocol to simulate realistic recommendation scenarios:
+
+1. **User Partitioning:** Users are split into disjoint training (80%) and testing (20%) cohorts.
+2. **Within-User Split:** For test users, a fraction of their ratings (e.g., 20%) is masked and held out as the prediction target (ground truth).
+3. **Inference (Context Phase):** The remaining 80% of the test user's ratings serve as the observable history (context) to generate latent hidden activations.
+4. **Ranking & Evaluation:** The model reconstructs ratings for all unobserved items. Previously observed context items are excluded from ranking, and recommendations are evaluated against the held-out targets.
+
+### Evaluation Metrics
+Performance is measured using both rating prediction and ranking metrics:
+* **Root Mean Squared Error (RMSE):** Calculated strictly over target items.
+* **Precision@K & Recall@K:** Measures the relevance of the top $K$ recommendations.
+* **NDCG@K (Normalized Discounted Cumulative Gain):** Evaluates ranking quality.
+
+---
+
+## Baseline Models
+
+The repository includes two baseline recommenders to contextualize GBRBM performance:
+* **Popularity Recommender:** Recommends the overall most popular items.
+* **Movie Mean Recommender:** Predicts rating values using item averages smoothed with a Bayesian shrinkage prior to handle sparse ratings.
+
+Both baselines are computed exclusively from the training user split to prevent information leakage.
+
+---
+
+## Installation
+
+Ensure you have Python 3.10+ installed, then clone the repository and install dependencies:
+
 ```bash
-git clone https://github.com/ALZ-11/RBM-Recommender
-cd RBM-Recommender
+git clone https://github.com/ALZ-11/RBM-recommender
+cd RBM-recommender
 pip install -r requirements.txt
 ```
 
-### 2. Dataset Setup
-Download the MovieLens Small dataset (`ml-latest-small.zip`) from GroupLens and place the archive directly in the root directory. The pipeline will automatically unpack the contents upon execution.
+### Dataset Setup
+Download the [MovieLens Latest Small Dataset](https://grouplens.org/datasets/movielens/latest/) and place the `ml-latest-small.zip` file or the unpacked `ml-latest-small/` directory in the repository root.
 
-### 3. Run Training and Evaluation
-Run the central script to start model training under the default configuration:
+---
+
+## Usage
+
+### 1. Training the GBRBM
+Run the training pipeline:
+
 ```bash
 python main.py
 ```
-This automatically writes a default YAML config file at `configs/config.yaml` if missing, initializes the database, and begins training with periodic metric reporting on TensorBoard.
+This script will load parameters from `configs/config.yaml`, partition the dataset, train the model using masked $CD-k$ updates, and run evaluations on held-out targets at configured intervals.
 
-### 4. Visualizing Results
-Execute the following command to monitor loss curves and continuous/ranking metrics on TensorBoard:
+### 2. Evaluating Benchmarks
+Run the baseline evaluation suite:
+
 ```bash
-tensorboard --logdir=runs/
+python main_benchmark.py
 ```
+This script computes comparative evaluation metrics for the Popularity and Movie Mean baselines using identical dataset partitions and seeds.
+
+---
+
+## Configuration
+
+All model architecture parameters, optimization hyperparameters, and evaluation protocols are configured via a centralized YAML file (`configs/config.yaml`).
+
+Example structure:
+
+```yaml
+experiment:
+  name: "GBRBM_MovieLens_Tuned"
+  seed: 42
+  device: "cuda"              # 'cuda' or 'cpu'
+  val_every_n_epochs: 5       # Run evaluation loop on held-out targets every N epochs
+
+dataset:
+  path: "ml-latest-small/ratings.csv"
+  train_split: 0.8            # User-level split ratio
+  test_ratio: 0.2             # Within-user rating hold-out ratio (gamma)
+
+model:
+  hidden_units: 256           # Number of latent features
+  sigma: 0.05                 # Standard deviation of Gaussian visible units
+
+hyperparameters:
+  epochs: 40
+  batch_size: 64
+  learning_rate: 0.005
+  cd_steps: 3                 # Contrastive Divergence steps (k)
+  l2_reg: 0.001               # Weight decay coefficient
+
+metrics:
+  top_k: 10                   # Top K recommendations to evaluate
+```
+
+---
+
+## TensorBoard Logging
+
+Training progress and evaluation performance are tracked automatically. Run the following command to view training curves:
+
+```bash
+tensorboard --logdir runs
+```
+
+Monitored parameters include training reconstruction loss, RMSE, Precision@K, Recall@K, and NDCG@K.
+
+---
+
+## Reproducibility
+
+In order to ensure deterministic experiments, the environment configuration initializes and fixes:
+* Python random seed
+* NumPy random seed
+* PyTorch random seed (CPU & CUDA)
+* CuDNN deterministic execution behaviors
+
+---
+
+## Future Work
+
+Potential areas for extending this codebase:
+* Integrating a Matrix Factorization (SVD) baseline
+* Implementing Neural Collaborative Filtering (NeuMF) and LightGCN comparison models
+* Automating hyperparameter tuning using Optuna
+* Evaluating scalability on larger datasets like MovieLens-1M and MovieLens-20M
+* Adding statistical significance testing (e.g., paired t-tests) on metric improvements
+* Implementing additional ranking metrics such as MAP (Mean Average Precision) and MRR (Mean Reciprocal Rank)
