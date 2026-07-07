@@ -50,7 +50,7 @@ class GaussianBernoulliRBM(nn.Module):
             v_sample_masked (Tensor): Gaussian sampled states of shape (batch_size, visible_units)
         """
         # Calculate continuous conditional expectations
-        v_mean = F.linear(h, self.W.t(), self.v_bias)
+        v_mean = self.v_bias + self.sigma * F.linear(h, self.W.t())
         
         # Add normal Gaussian noise scaled by visible standard deviation
         noise = torch.randn_like(v_mean) * self.sigma
