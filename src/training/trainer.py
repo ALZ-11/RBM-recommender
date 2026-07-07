@@ -46,15 +46,16 @@ class GBRBMTrainer:
         item_active = (torch.sum(batch_m, dim=0) > 0).float()
             
         # Compute Manual Masked Gradients
-        # Weights Gradient (with unobserved columns zeroed out and L2 regularization applied)
-        pos_grad_W = torch.mm(pos_h_prob.t(), batch_v / self.model.sigma)
-        neg_grad_W = torch.mm(neg_h_prob.t(), v_curr_mean / self.model.sigma)
+        # absorb 1/sigma and 1/sigma^2 into parameter-specific learning rates
+        # (cancels out the division by small sigma values, thereby stabilizing optimization)
+        pos_grad_W = torch.mm(pos_h_prob.t(), batch_v)
+        neg_grad_W = torch.mm(neg_h_prob.t(), v_curr_mean)
         
-        # Apply weight decay strictly to active items in this batch (fix)
+        # Multiply L2 decay by active items to prevent over-regularization of rare movies
         grad_W = -(pos_grad_W - neg_grad_W) / batch_size + self.l2_reg * self.model.W * item_active.unsqueeze(0)
         
-        # Visible Bias Gradient (Masked and scaled by sigma^2)
-        grad_v_bias = -torch.mean(((batch_v - v_curr_mean) * batch_m) / (self.model.sigma ** 2), dim=0)
+        # Visible Bias Gradient (Masked, division by sigma^2 absorbed into learning rate)
+        grad_v_bias = -torch.mean((batch_v - v_curr_mean) * batch_m, dim=0)
         
         # Hidden Bias Gradient
         grad_h_bias = -torch.mean(pos_h_prob - neg_h_prob, dim=0)
